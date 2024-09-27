@@ -16,12 +16,12 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
-// app.use(cors({
-//     origin: ['http://localhost:3000', "*"],
-//     credentials: true
-// }));
+app.use(cors({
+  origin: 'http://localhost:5173', // Allow requests from your frontend
+  credentials: true // Allow cookies to be sent with requests
+}));
 
-app.use(cors());
+// app.use(cors());
 
 const port = process.env.PORT || 5001;
 const mongoURI = process.env.MONGODB_URI;
@@ -45,148 +45,124 @@ const userSchema = new mongoose.Schema({
 });
 const userModel = mongoose.model("Users", userSchema);
 
-app.post("/signup", (req, res) => {
+app.post("/signup", async (req, res) => {
   let body = req.body;
 
   if (!body.firstName || !body.lastName || !body.email || !body.password) {
-    res.status(400).send(
-      `required fields missing, request example: 
+    return res.status(400).send({
+      message: `Required fields missing, request example: 
                 {
                     "firstName": "John",
                     "lastName": "Doe",
                     "email": "abc@abc.com",
                     "password": "12345"
-                }`
-    );
-    return;
+                }`,
+    });
   }
 
   req.body.email = req.body.email.toLowerCase();
 
-  // check if user already exist // query email user
-  userModel.findOne({ email: body.email }, (err, user) => {
-    if (!err) {
-      console.log("user: ", user);
-
-      if (user) {
-        // user already exist
-        console.log("user already exist: ", user);
-        res.status(400).send({
-          message: "user already exist,, please try a different email",
-        });
-        return;
-      } else {
-        // user not already exist
-
-        // bcrypt hash
-        stringToHash(body.password).then((hashString) => {
-          userModel.create(
-            {
-              firstName: body.firstName,
-              lastName: body.lastName,
-              email: body.email,
-              password: hashString,
-            },
-            (err, result) => {
-              if (!err) {
-                console.log("data saved: ", result);
-                res.status(201).send({ message: "user is created" });
-              } else {
-                console.log("db error: ", err);
-                res.status(500).send({ message: "internal server error" });
-              }
-            }
-          );
-        });
-      }
-    } else {
-      console.log("db error: ", err);
-      res.status(500).send({ message: "db error in query" });
-      return;
+  try {
+    // Check if user already exists
+    const user = await userModel.findOne({ email: body.email });
+    
+    if (user) {
+      return res.status(400).send({
+        message: "User already exists, please try a different email",
+      });
     }
-  });
+
+    // If user doesn't exist, hash password and create the user
+    const hashString = await stringToHash(body.password);
+    const newUser = await userModel.create({
+      firstName: body.firstName,
+      lastName: body.lastName,
+      email: body.email,
+      password: hashString,
+    });
+
+    return res.status(201).send({ message: "User is created" });
+  } catch (err) {
+    console.log("Error: ", err);
+    return res.status(500).send({ message: "Internal server error" });
+  }
 });
 
-app.post("/login", (req, res) => {
-  let body = req.body;
+
+app.post("/login", async (req, res) => {
+  const body = req.body;
   body.email = body.email.toLowerCase();
 
   if (!body.email || !body.password) {
-    // null check - undefined, "", 0 , false, null , NaN
-    res.status(400).send(
-      `required fields missing, request example: 
+    // Null check - undefined, "", 0, false, null, NaN
+    return res.status(400).send(
+      `Required fields missing, request example: 
                 {
                     "email": "abc@abc.com",
                     "password": "12345"
                 }`
     );
-    return;
   }
 
-  // check if user exist
-  userModel.findOne(
-    { email: body.email },
-    "firstName lastName email password",
-    (err, data) => {
-      if (!err) {
-        console.log("data: ", data);
+  try {
+    // Check if user exists
+    const data = await userModel.findOne(
+      { email: body.email },
+      "firstName lastName email password"
+    );
 
-        if (data) {
-          // user found
-          varifyHash(body.password, data.password).then((isMatched) => {
-            console.log("isMatched: ", isMatched);
+    console.log("data: ", data);
 
-            if (isMatched) {
-              const token = jwt.sign(
-                {
-                  _id: data._id,
-                  email: data.email,
-                  iat: Math.floor(Date.now() / 1000) - 30,
-                  exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
-                },
-                SECRET
-              );
+    if (data) {
+      // User found
+      const isMatched = await varifyHash(body.password, data.password);
+      console.log("isMatched: ", isMatched);
 
-              console.log("token: ", token);
+      if (isMatched) {
+        const token = jwt.sign(
+          {
+            _id: data._id,
+            email: data.email,
+            iat: Math.floor(Date.now() / 1000) - 30,
+            exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
+          },
+          SECRET
+        );
 
-              res.cookie("Token", token, {
-                maxAge: 86_400_000,
-                httpOnly: true,
-                // sameSite: true,
-                // secure: true
-              });
+        console.log("token: ", token);
 
-              res.send({
-                message: "login successful",
-                profile: {
-                  email: data.email,
-                  firstName: data.firstName,
-                  lastName: data.lastName,
-                  age: data.age,
-                  _id: data._id,
-                },
-              });
-              return;
-            } else {
-              console.log("password did not match");
-              res.status(401).send({ message: "Incorrect email or password" });
-              return;
-            }
-          });
-        } else {
-          // user not already exist
-          console.log("user not found");
-          res.status(401).send({ message: "Incorrect email or password" });
-          return;
-        }
+        res.cookie("Token", token, {
+          maxAge: 86_400_000,
+          httpOnly: true,
+          // sameSite: true,
+          // secure: true,
+        });
+
+        return res.send({
+          message: "Login successful",
+          profile: {
+            email: data.email,
+            firstName: data.firstName,
+            lastName: data.lastName,
+            age: data.age,
+            _id: data._id,
+          },
+        });
       } else {
-        console.log("db error: ", err);
-        res.status(500).send({ message: "login failed, please try later" });
-        return;
+        console.log("Password did not match");
+        return res.status(401).send({ message: "Incorrect email or password" });
       }
+    } else {
+      // User does not exist
+      console.log("User not found");
+      return res.status(401).send({ message: "Incorrect email or password" });
     }
-  );
+  } catch (err) {
+    console.log("DB error: ", err);
+    return res.status(500).send({ message: "Login failed, please try later" });
+  }
 });
+
 
 
 app.post("/logout", (req, res) => {
