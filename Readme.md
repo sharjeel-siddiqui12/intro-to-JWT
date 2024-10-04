@@ -1,6 +1,6 @@
 # Introduction to JWT
 
-This project demonstrates the implementation of JSON Web Tokens (JWT) for authentication and the use of Context API for state management in a React application.
+This project gives the basics implementation of JSON Web Tokens (JWT) for authentication and the use of Context API for state management in a React application.
 
 ## Table of Contents
 - [Introduction](#introduction)
